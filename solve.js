@@ -7,18 +7,31 @@
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-// Append s[a..b) HTML-escaped to the string array `out`, in bulk runs.
+// Append s[a..b) HTML-escaped to the string array `out`, in bulk runs
+// (native scans for the next special, no per-character loop).
 function escRange(s, a, b, out) {
-  let start = a;
-  for (let i = a; i < b; i++) {
-    const c = s.charCodeAt(i);
-    if (c === 38 || c === 60 || c === 62 || c === 34 || c === 39) {
-      if (i > start) out.push(s.slice(start, i));
-      out.push(c === 38 ? '&amp;' : c === 60 ? '&lt;' : c === 62 ? '&gt;' : c === 34 ? '&quot;' : '&#39;');
-      start = i + 1;
+  let i = a;
+  while (i < b) {
+    let j = b;
+    let k = s.indexOf('&', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf('<', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf('>', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf('"', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf("'", i);
+    if (k !== -1 && k < j) j = k;
+    if (j >= b) {
+      out.push(s.slice(i, b));
+      return;
     }
+    if (j > i) out.push(s.slice(i, j));
+    const c = s.charCodeAt(j);
+    out.push(c === 38 ? '&amp;' : c === 60 ? '&lt;' : c === 62 ? '&gt;' : c === 34 ? '&quot;' : '&#39;');
+    i = j + 1;
   }
-  if (b > start) out.push(s.slice(start, b));
 }
 
 // Append all of `s` HTML-escaped to `out`.
@@ -28,16 +41,22 @@ function escInto(s, out) {
 
 // `s` HTML-escaped, as a string (returns `s` itself when nothing needs escaping).
 function escStr(s) {
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c === 38 || c === 60 || c === 62 || c === 34 || c === 39) {
-      const out = [];
-      if (i > 0) out.push(s.slice(0, i));
-      escRange(s, i, s.length, out);
-      return out.join('');
-    }
-  }
-  return s;
+  let j = s.length;
+  let k = s.indexOf('&');
+  if (k !== -1 && k < j) j = k;
+  k = s.indexOf('<');
+  if (k !== -1 && k < j) j = k;
+  k = s.indexOf('>');
+  if (k !== -1 && k < j) j = k;
+  k = s.indexOf('"');
+  if (k !== -1 && k < j) j = k;
+  k = s.indexOf("'");
+  if (k !== -1 && k < j) j = k;
+  if (j >= s.length) return s;
+  const out = [];
+  if (j > 0) out.push(s.slice(0, j));
+  escRange(s, j, s.length, out);
+  return out.join('');
 }
 
 const slugCache = new Map();
@@ -413,69 +432,80 @@ function inlineRange(s, lo, hi, env, out) {
   let i = lo;
   let run = lo;
   while (i < hi) {
-    const c = s[i];
-    if (c === '\\' && i + 1 < hi && ESCAPABLE.has(s[i + 1])) {
-      if (i > run) escRange(s, run, i, out);
-      const e = s[i + 1];
+    // Jump to the next character that can start a construct.
+    let j = hi;
+    let k = s.indexOf('\\', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf('`', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf('*', i);
+    if (k !== -1 && k < j) j = k;
+    k = s.indexOf('[', i);
+    if (k !== -1 && k < j) j = k;
+    if (j >= hi) break;
+    const c = s[j];
+    if (c === '\\' && j + 1 < hi && ESCAPABLE.has(s[j + 1])) {
+      if (j > run) escRange(s, run, j, out);
+      const e = s[j + 1];
       out.push(e === '>' ? '&gt;' : e);
-      i += 2;
+      i = j + 2;
       run = i;
       continue;
     }
     if (c === '`') {
-      const j = s.indexOf('`', i + 1);
-      if (j !== -1 && j < hi && j > i + 1) {
-        if (i > run) escRange(s, run, i, out);
+      const m = s.indexOf('`', j + 1);
+      if (m !== -1 && m < hi && m > j + 1) {
+        if (j > run) escRange(s, run, j, out);
         out.push('<code>');
-        escRange(s, i + 1, j, out);
+        escRange(s, j + 1, m, out);
         out.push('</code>');
-        i = j + 1;
+        i = m + 1;
         run = i;
-      } else i++;
+      } else i = j + 1;
       continue;
     }
     if (c === '*') {
-      if (s[i + 1] === '*') {
-        const j = findUnescaped(s, '**', i + 2, hi);
-        if (j > i + 2) {
-          if (i > run) escRange(s, run, i, out);
+      if (s[j + 1] === '*') {
+        const m = findUnescaped(s, '**', j + 2, hi);
+        if (m > j + 2) {
+          if (j > run) escRange(s, run, j, out);
           out.push('<strong>');
-          inlineRange(s, i + 2, j, env, out);
+          inlineRange(s, j + 2, m, env, out);
           out.push('</strong>');
-          i = j + 2;
+          i = m + 2;
           run = i;
-        } else i += 2;
+        } else i = j + 2;
         continue;
       }
-      const j = findSingleStar(s, i + 1, hi);
-      if (j > i + 1) {
-        if (i > run) escRange(s, run, i, out);
+      const m = findSingleStar(s, j + 1, hi);
+      if (m > j + 1) {
+        if (j > run) escRange(s, run, j, out);
         out.push('<em>');
-        inlineRange(s, i + 1, j, env, out);
+        inlineRange(s, j + 1, m, env, out);
         out.push('</em>');
-        i = j + 1;
+        i = m + 1;
         run = i;
-      } else i++;
+      } else i = j + 1;
       continue;
     }
     if (c === '[') {
-      const k = findUnescaped(s, ']', i + 1, hi);
-      let m = k !== -1 && s[k + 1] === '(' ? s.indexOf(')', k + 2) : -1;
-      if (m !== -1 && m >= hi) m = -1;
-      const target = m === -1 ? '' : s.slice(k + 2, m);
+      const m = findUnescaped(s, ']', j + 1, hi);
+      let p = m !== -1 && s[m + 1] === '(' ? s.indexOf(')', m + 2) : -1;
+      if (p !== -1 && p >= hi) p = -1;
+      const target = p === -1 ? '' : s.slice(m + 2, p);
       if (target !== '' && !/\s/.test(target)) {
-        if (i > run) escRange(s, run, i, out);
+        if (j > run) escRange(s, run, j, out);
         out.push('<a href="');
         escInto(env.link(target), out);
         out.push('">');
-        inlineRange(s, i + 1, k, env, out);
+        inlineRange(s, j + 1, m, env, out);
         out.push('</a>');
-        i = m + 1;
+        i = p + 1;
         run = i;
-      } else i++;
+      } else i = j + 1;
       continue;
     }
-    i++;
+    i = j + 1;
   }
   if (hi > run) escRange(s, run, hi, out);
 }
